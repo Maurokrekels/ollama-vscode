@@ -36,6 +36,10 @@
             {
                 "command": "ollama.openChat",
                 "title": "Open Ollama Chat"
+            },
+            {
+                "command": "ollama.toggleAutocomplete",
+                "title": "Toggle Ollama Autocomplete"
             }
         ],
         "configuration": {
@@ -50,6 +54,21 @@
                     "type": "string",
                     "default": "llama3.2:latest",
                     "description": "Default Ollama model to use"
+                },
+                "ollama.autocomplete.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show inline code completions from Ollama"
+                },
+                "ollama.autocomplete.model": {
+                    "type": "string",
+                    "default": "qwen2.5-coder:3b",
+                    "description": "Model for autocomplete. Must support fill-in-the-middle (e.g. qwen2.5-coder base models)"
+                },
+                "ollama.autocomplete.debounceMs": {
+                    "type": "number",
+                    "default": 300,
+                    "description": "Wait time in ms after typing before requesting a completion"
                 }
             }
         }
