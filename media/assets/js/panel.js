@@ -1,5 +1,18 @@
 const vscode = acquireVsCodeApi();
 const chatContainer = document.getElementById('chatContainer');
+
+let stickToBottom = true;
+
+chatContainer.addEventListener('scroll', () => {
+    const distanceFromBottom =
+        chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight;
+    stickToBottom = distanceFromBottom < 40;
+});
+
+function scrollToBottom(force = false) {
+    if (force) stickToBottom = true;
+    if (stickToBottom) chatContainer.scrollTop = chatContainer.scrollHeight;
+}
 const messageInput = document.getElementById('messageInput');
 const sendButton = document.getElementById('sendButton');
 const status = document.getElementById('status');
@@ -184,7 +197,7 @@ function addMessage(role, content, messageId, thinking) {
 
     messageDiv.appendChild(body);
     chatContainer.appendChild(messageDiv);
-    chatContainer.scrollTop = chatContainer.scrollHeight;
+    scrollToBottom(true);
     return contentDiv;
 }
 
@@ -285,7 +298,7 @@ function updateLastMessage(content) {
         const contentDiv = lastMessage.querySelector('.message-content');
         if (contentDiv) {
             contentDiv.innerHTML = renderMarkdown(content);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
+            scrollToBottom();
         }
     }
 }
@@ -304,7 +317,7 @@ function updateLastThinking(thinking) {
                 lastMessage._thinkingSection.style.display = 'none';
                 if (thinkingHeader) thinkingHeader.classList.remove('shimmer');
             }
-            chatContainer.scrollTop = chatContainer.scrollHeight;
+            scrollToBottom();
         }
     }
 }
@@ -314,7 +327,7 @@ function showError(message) {
     errorDiv.className = 'error';
     errorDiv.textContent = message;
     chatContainer.appendChild(errorDiv);
-    chatContainer.scrollTop = chatContainer.scrollHeight;
+    scrollToBottom(true);
 }
 
 function removeEmptyAssistantPlaceholder() {
@@ -341,26 +354,28 @@ messageInput.addEventListener('keydown', (e) => {
 messageInput.addEventListener('input', () => {
     messageInput.style.height = '32px';
     messageInput.style.height = Math.min(messageInput.scrollHeight, 200) + 'px';
+    updateSendIcon();
 });
 
 sendButton.addEventListener('click', () => {
-    if (isLoading) stopMessage();
+    if (isLoading && !messageInput.value.trim()) stopMessage();
     else sendMessage();
 });
 
+function updateSendIcon() {
+    setSendIcon(isLoading && !messageInput.value.trim());
+}
+
 function sendMessage() {
     const text = messageInput.value.trim();
-    if (!text || isLoading) return;
+    if (!text) return;
 
     isLoading = true;
-    sendButton.disabled = false;
-    messageInput.disabled = true;
-    setSendIcon(true);
-
     vscode.postMessage({ command: 'sendMessage', text: text });
 
     messageInput.value = '';
     messageInput.style.height = '32px';
+    updateSendIcon();
 }
 
 function stopMessage() {
@@ -381,13 +396,16 @@ window.addEventListener('message', event => {
                 ? message.message.id
                 : (message.message.role === 'user' ? userMessageIdCounter++ : undefined);
             addMessage(message.message.role, message.message.content, msgId, message.message.thinking);
-            if (message.message.role === 'assistant') {
-                isLoading = false;
-                sendButton.disabled = false;
-                messageInput.disabled = false;
-                setSendIcon(false);
-                messageInput.focus();
-            }
+            break;
+        case 'generationState':
+            isLoading = message.active;
+            sendButton.disabled = false;
+            messageInput.disabled = false;
+            updateSendIcon();
+            break;
+        case 'generationInterrupted':
+            removeEmptyAssistantPlaceholder();
+            chatContainer.querySelectorAll('.shimmer').forEach(el => el.classList.remove('shimmer'));
             break;
         case 'editMessage':
             editMessage(message.messageId, message.newContent);

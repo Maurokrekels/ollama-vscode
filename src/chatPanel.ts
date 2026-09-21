@@ -21,6 +21,13 @@ export class ChatPanel {
     private _messages: OllamaMessage[] = [];
     private _selectedModel: string;
     private _currentRequest: { abort: () => void } | null = null;
+    private _generationId: number = 0;
+    private _isGenerating: boolean = false;
+    private _partialContent: string = "";
+    private _partialThinking: string = "";
+    private _steerQueue: OllamaMessage[] = [];
+    private _steerTimer: NodeJS.Timeout | null = null;
+    private readonly _steerDebounceMs: number = 1000;
     private _messageIdCounter: number = 0;
     private _currentChatId: string | null = null;
     private _operationLocks: Set<string> = new Set();
@@ -60,6 +67,7 @@ export class ChatPanel {
                         );
                         return;
                     case "clearChat":
+                        this.resetGeneration();
                         this._messages = [];
                         this._messageIdCounter = 0;
                         this._currentChatId = null;
@@ -95,10 +103,7 @@ export class ChatPanel {
                         }
                         return;
                     case "stopMessage":
-                        if (this._currentRequest) {
-                            this._currentRequest.abort();
-                            this._currentRequest = null;
-                        }
+                        await this.stopGeneration();
                         return;
                     case "loadChat":
                         await this.loadChat(message.chatId);
@@ -350,6 +355,7 @@ export class ChatPanel {
             return;
         }
 
+        this.resetGeneration();
         this._currentChatId = chatId;
         this._messages = [...chat.messages];
         this._selectedModel = chat.model;
@@ -420,6 +426,7 @@ export class ChatPanel {
                 );
 
                 if (wasCurrentChat) {
+                    this.resetGeneration();
                     this._currentChatId = null;
                     this._messages = [];
                     this._messageIdCounter = 0;
@@ -641,20 +648,133 @@ export class ChatPanel {
             content: text,
         };
 
-        this._messages.push(userMessage);
+        const steering = this._isGenerating || this._steerTimer !== null;
+        if (this._isGenerating) {
+            this.interruptGeneration();
+        }
+
         this._panel.webview.postMessage({
             command: "addMessage",
             message: { id: messageId, role: "user", content: text },
         });
 
+        if (steering) {
+            this.queueSteerMessage(userMessage);
+            return;
+        }
+
+        this._messages.push(userMessage);
         await this.sendAssistantResponse();
         await this.saveCurrentChat();
+    }
+
+    private interruptGeneration() {
+        const request = this._currentRequest;
+        this._generationId++;
+        this._isGenerating = false;
+        this._currentRequest = null;
+        request?.abort();
+
+        if (this._partialContent.trim() || this._partialThinking.trim()) {
+            const partial: OllamaMessage = {
+                role: "assistant",
+                content: this._partialContent,
+            };
+            if (this._partialThinking) {
+                partial.thinking = this._partialThinking;
+            }
+            this._messages.push(partial);
+        }
+        this._partialContent = "";
+        this._partialThinking = "";
+
+        this._panel.webview.postMessage({ command: "generationInterrupted" });
+    }
+
+    private queueSteerMessage(message: OllamaMessage) {
+        this._steerQueue.push(message);
+        if (this._steerTimer) {
+            clearTimeout(this._steerTimer);
+        }
+        this._steerTimer = setTimeout(() => {
+            void this.resumeAfterSteer();
+        }, this._steerDebounceMs);
+    }
+
+    private flushSteerQueue() {
+        this._messages.push(...this._steerQueue);
+        this._steerQueue = [];
+    }
+
+    private async resumeAfterSteer() {
+        this._steerTimer = null;
+        this.flushSteerQueue();
+        await this.sendAssistantResponse();
+        await this.saveCurrentChat();
+    }
+
+    private async stopGeneration() {
+        const hadPendingSteer = this._steerTimer !== null;
+        if (this._steerTimer) {
+            clearTimeout(this._steerTimer);
+            this._steerTimer = null;
+        }
+        this.flushSteerQueue();
+
+        if (this._currentRequest) {
+            this._currentRequest.abort();
+            this._currentRequest = null;
+        } else if (hadPendingSteer) {
+            this._panel.webview.postMessage({ command: "messageStopped" });
+            await this.saveCurrentChat();
+        }
+    }
+
+    private resetGeneration() {
+        const request = this._currentRequest;
+        this._generationId++;
+        this._isGenerating = false;
+        this._currentRequest = null;
+        request?.abort();
+        if (this._steerTimer) {
+            clearTimeout(this._steerTimer);
+            this._steerTimer = null;
+        }
+        this._steerQueue = [];
+        this._partialContent = "";
+        this._partialThinking = "";
+        this._panel.webview.postMessage({
+            command: "generationState",
+            active: false,
+        });
+    }
+
+    private messagesForRequest(): OllamaMessage[] {
+        const merged: OllamaMessage[] = [];
+        for (const message of this._messages) {
+            const previous = merged[merged.length - 1];
+            if (previous?.role === "user" && message.role === "user") {
+                merged[merged.length - 1] = {
+                    ...previous,
+                    content: `${previous.content}\n\n${message.content}`,
+                };
+            } else {
+                merged.push(message);
+            }
+        }
+        return merged;
     }
 
     private async handleEditAndResend(messageId: number, newText: string) {
         if (!newText.trim()) {
             return;
         }
+
+        if (this._steerTimer) {
+            clearTimeout(this._steerTimer);
+            this._steerTimer = null;
+        }
+        this._steerQueue = [];
 
         if (this._currentRequest) {
             this._currentRequest.abort();
@@ -697,34 +817,47 @@ export class ChatPanel {
     }
 
     private async sendAssistantResponse() {
+        const generationId = ++this._generationId;
+        this._isGenerating = true;
+        this._partialContent = "";
+        this._partialThinking = "";
+
         const assistantMessage: OllamaMessage = {
             role: "assistant",
             content: "",
         };
 
         this._panel.webview.postMessage({
+            command: "generationState",
+            active: true,
+        });
+        this._panel.webview.postMessage({
             command: "addMessage",
             message: { role: "assistant", content: "" },
         });
 
         try {
-            let fullResponse = "";
-            let fullThinking = "";
             const request = this._ollamaClient.chat(
-                this._messages,
+                this.messagesForRequest(),
                 this._selectedModel,
                 (chunk) => {
-                    fullResponse += chunk;
+                    if (generationId !== this._generationId) {
+                        return;
+                    }
+                    this._partialContent += chunk;
                     this._panel.webview.postMessage({
                         command: "updateMessage",
-                        content: fullResponse,
+                        content: this._partialContent,
                     });
                 },
                 (thinking) => {
-                    fullThinking = thinking;
+                    if (generationId !== this._generationId) {
+                        return;
+                    }
+                    this._partialThinking = thinking;
                     this._panel.webview.postMessage({
                         command: "updateThinking",
-                        thinking: fullThinking,
+                        thinking: this._partialThinking,
                     });
                 },
             );
@@ -732,6 +865,10 @@ export class ChatPanel {
             this._currentRequest = request;
 
             const result = await request.promise;
+
+            if (generationId !== this._generationId) {
+                return;
+            }
 
             this._currentRequest = null;
             assistantMessage.content = result.content;
@@ -746,6 +883,9 @@ export class ChatPanel {
             }
             await this.saveCurrentChat();
         } catch (error: any) {
+            if (generationId !== this._generationId) {
+                return;
+            }
             this._currentRequest = null;
             const errorMessage = error.message || "An error occurred";
             if (
@@ -759,6 +899,14 @@ export class ChatPanel {
                 this._panel.webview.postMessage({
                     command: "error",
                     message: errorMessage,
+                });
+            }
+        } finally {
+            if (generationId === this._generationId) {
+                this._isGenerating = false;
+                this._panel.webview.postMessage({
+                    command: "generationState",
+                    active: false,
                 });
             }
         }
