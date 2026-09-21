@@ -657,6 +657,7 @@ export class ChatPanel {
             command: "addMessage",
             message: { id: messageId, role: "user", content: text },
         });
+        void vscode.commands.executeCommand("ollama.recordUsage");
 
         if (steering) {
             this.queueSteerMessage(userMessage);

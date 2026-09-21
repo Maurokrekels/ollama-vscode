@@ -171,12 +171,15 @@ export class OllamaCompletionProvider
                 return [];
             }
             this.onStatus("suggested");
-            return [
-                new vscode.InlineCompletionItem(
-                    completion,
-                    new vscode.Range(position, position),
-                ),
-            ];
+            const item = new vscode.InlineCompletionItem(
+                completion,
+                new vscode.Range(position, position),
+            );
+            item.command = {
+                command: "ollama.recordUsage",
+                title: "Record Ollama usage",
+            };
+            return [item];
         } catch {
             this.onStatus("error");
             return [];

@@ -37,8 +37,27 @@ In VS Code **Settings** (or `settings.json`):
 | ---------------- | -------------------------- | ------------------------ |
 | `ollama.baseUrl` | Ollama API base URL        | `http://localhost:11434` |
 | `ollama.model`   | Default model for the chat | `llama3.2:latest`        |
+| `ollama.autocomplete.enabled` | Show inline code completions | `true` |
+| `ollama.autocomplete.model` | Model for autocomplete (must support fill-in-the-middle) | `qwen2.5-coder:3b` |
+| `ollama.autocomplete.debounceMs` | Wait after typing before requesting a completion | `300` |
+
+## Autocomplete
+
+Inline completions (grey ghost text, accept with **Tab**) come from a local model through Ollama's fill-in-the-middle support.
+
+1. Pull a code model: `ollama pull qwen2.5-coder:3b`
+2. Start typing. The status bar item **Ollama AC** shows when a request runs and whether a suggestion arrived. Click it to toggle autocomplete.
+
+Use a small model for autocomplete, since it runs on every pause while typing. If another extension (for example Copilot) also shows inline suggestions, disable it while testing so you can tell them apart.
+
+## Chat steering
+
+You can keep typing while the model answers. A message sent mid-response stops the current stream, keeps what was already written, and restarts with your new message. Messages sent within one second are merged into a single follow-up.
 
 ## Features
+
+- Inline autocomplete with a status bar indicator
+- Send messages while the model is answering to steer the response
 
 - Chat panel inside VS Code
 - Connects to your local Ollama API
