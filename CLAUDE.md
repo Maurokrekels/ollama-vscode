@@ -15,6 +15,7 @@ Test by pressing F5 in VS Code (Extension Development Host), then run the "Open 
 ## Structure
 
 - `src/extension.ts` - entry point, registers the `ollama.openChat` command
+- `src/completionProvider.ts` - inline autocomplete (FIM via `/api/generate` with `suffix`, debounced, cancellable)
 - `src/chatPanel.ts` - webview chat panel (UI)
 - `src/ollamaClient.ts` - client for the local Ollama API (base URL handling, requests)
 - `media/` - icon and webview assets
