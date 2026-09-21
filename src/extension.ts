@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { ChatPanel } from "./chatPanel";
+import { ReviewPrompt } from "./reviewPrompt";
 import {
     AutocompleteStatus,
     OllamaCompletionProvider,
@@ -79,7 +80,21 @@ export function activate(context: vscode.ExtensionContext) {
         }
     );
 
+    const reviewPrompt = new ReviewPrompt(context);
+
+    const recordUsage = vscode.commands.registerCommand(
+        "ollama.recordUsage",
+        () => reviewPrompt.recordUsage()
+    );
+
+    const leaveReview = vscode.commands.registerCommand(
+        "ollama.leaveReview",
+        () => reviewPrompt.openReviewPage()
+    );
+
     context.subscriptions.push(
+        recordUsage,
+        leaveReview,
         openChat,
         statusBarItem,
         autocompleteItem,
